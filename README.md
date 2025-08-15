@@ -55,4 +55,34 @@ python app.py
 
 You can specify the `--server_port`, `--share`, `--server_name` arguments to satisfy your needs!
 
+## Texture Delight for 3D Models 🎨
 
+StableDelight not only works for single 2D image, but can also remove specular reflections from **3D model textures**.
+
+### Input format
+Your `source_dir/` should contain:
+```bash
+source_dir/
+├── images/ 
+│ ├── 000.png
+│ ├── 000.cam
+│ └── ...
+└── 3DModel.ply 
+```
+### Step 1 — Delight the Texture Images
+```bash
+python stabledelight/script/image_delight.py -s source_dir
+```
+This will generate an images_delighted/ folder inside source_dir/ containing the reflection-free images.
+
+### Step 2 — Binding Texture to the Mesh
+The output data is organized in the same format as [mvs-texturing](https://github.com/nmoehrle/mvs-texturing/tree/master). Follow these steps to add texture to the mesh:
+
+* Compile the mvs-texturing repository on your system.
+* Add the build/bin directory to your PATH environment variable
+* Navigate to the output directory containing the mesh.
+* Run the following command:
+```bash
+texrecon ./images ./fused_mesh.ply ./textured_mesh --outlier_removal=gauss_clamping --data_term=area --no_intermediate_results
+```
+The final textured_mesh.obj will now contain the **specular-free texture**.

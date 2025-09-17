@@ -2,7 +2,7 @@ import os
 import argparse
 import torch
 from PIL import Image
-from stabledelight.utils.images import align_saturation, detail_transfer, create_brightness_mask
+from stabledelight.utils.image import align_saturation, detail_transfer, create_brightness_mask
 import click
 import numpy as np
 import time

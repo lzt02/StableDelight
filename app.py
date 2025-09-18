@@ -35,7 +35,8 @@ from tqdm import tqdm
 from pathlib import Path
 import gradio
 from gradio.utils import get_cache_folder
-from stabledelight import YosoDelightPipeline
+from stabledelight.system.pipeline_yoso_delight import YosoDelightPipeline
+from stabledelight.script.render_image import process_model_file
 
 class Examples(gradio.helpers.Examples):
     def __init__(self, *args, directory_name=None, **kwargs):
@@ -181,6 +182,48 @@ def process_video(
         [path_out_vis,]
     )
 
+def process_mesh(pipe, mesh_path):
+    if mesh_path is None:
+        raise gr.Error("Please upload a mesh file (.obj or .ply).")
+
+    work_dir = tempfile.mkdtemp()
+    render_out_dir = os.path.join(work_dir, "renders")
+    delight_out_dir = os.path.join(work_dir, "delight")
+
+    # 1. 渲染多视图
+    process_model_file(
+        mesh_path,
+        render_out_dir,
+        scale=2.5,
+        res=512,
+        num_round_views=16,
+        num_elevations=3,
+        min_elev=-20,
+        max_elev=40,
+        space="camera",
+        gpu_id=0
+    )
+
+    # 2. 对每张渲染结果做 Delighting
+    os.makedirs(delight_out_dir, exist_ok=True)
+    for file in sorted(os.listdir(render_out_dir)):
+        if file.endswith(".png"):
+            input_path = os.path.join(render_out_dir, file)
+            for _, output_path in process_image(pipe, input_path):
+                if isinstance(output_path, str):
+                    shutil.copy(output_path, os.path.join(delight_out_dir, file))
+
+    # 3. 调用 texrecon 生成贴图 mesh
+    tex_mesh_path = os.path.join(work_dir, "textured_mesh.obj")
+    subprocess.run([
+        "texrecon", 
+        os.path.join(render_out_dir, "cameras.nvm"),  # 需要你提供相机文件或替换
+        delight_out_dir,
+        tex_mesh_path,
+        "--outdir", work_dir
+    ], check=True)
+
+    return [tex_mesh_path, render_out_dir, delight_out_dir]
 
 def run_demo_server(pipe):
     process_pipe_image = spaces.GPU(functools.partial(process_image, pipe))
@@ -251,7 +294,7 @@ def run_demo_server(pipe):
                         )
                         with gr.Row():
                             image_submit_btn = gr.Button(
-                                value="Delightning", variant="primary"
+                                value="Delighting", variant="primary"
                             )
                             image_reset_btn = gr.Button(value="Reset")
                     with gr.Column():
@@ -316,6 +359,23 @@ def run_demo_server(pipe):
                     cache_examples=False,
                 )
 
+            with gr.Tab("3D Mesh"):
+                with gr.Row():
+                    with gr.Column():
+                        mesh_input = gr.File(
+                            label="Upload 3D Mesh",
+                            type="filepath",
+                            file_types=[".obj", ".ply", ".glb", ".gltf"],
+                        )
+                        mesh_submit_btn = gr.Button(value="Delighting", variant="primary")
+                        mesh_reset_btn = gr.Button(value="Reset")
+                    with gr.Column():
+                        mesh_output_files = gr.Files(
+                            label="Outputs (Textured Mesh + Images)",
+                            elem_id="download",
+                            interactive=False,
+                        )
+
         ### Image tab
         image_submit_btn.click(
             fn=process_image_check,
@@ -361,6 +421,23 @@ def run_demo_server(pipe):
             outputs=[video_input, processed_frames, video_output_files],
             concurrency_limit=1,
         )
+        
+        ### 3D Mesh tab
+        
+        mesh_submit_btn.click(
+            fn=functools.partial(process_mesh, pipe),
+            inputs=[mesh_input],
+            outputs=[mesh_output_files],
+            concurrency_limit=1,
+        )
+
+        mesh_reset_btn.click(
+            fn=lambda: None,
+            inputs=[],
+            outputs=[mesh_input, mesh_output_files],
+            concurrency_limit=1,
+        )
+
 
         ### Server launch
 
@@ -378,7 +455,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     pipe = YosoDelightPipeline.from_pretrained(
-        'weights/yoso-delight-v0-4-base', trust_remote_code=True, variant="fp16", 
+        'Stable-X/yoso-delight-v0-4-base', trust_remote_code=True, variant="fp16", 
         torch_dtype=torch.float16, t_start=0).to(device)
     # pipe.push_to_hub('Stable-X/yoso-delight-v0-4-base', variant="fp16")
     try:
